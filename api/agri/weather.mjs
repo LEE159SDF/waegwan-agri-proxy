@@ -4,12 +4,13 @@ export default async function handler(req, res) {
     const KEY = process.env.DATA_GO_KEY;
     if (!KEY) return res.status(500).send('Missing DATA_GO_KEY');
 
-    const { date = '', spotCd = '', pageNo = '1', pageSize = '20', spotNm = '' } = req.query ?? {};
+    const { date = '', spotCd = '', pageNo = '1', pageSize = '20', spotNm = '', debug = '0' } = req.query ?? {};
     if (!date || !spotCd) return res.status(400).send('Required: date(YYYY-MM-DD), spotCd');
 
+    // V3 먼저 시도 → 실패 시 구버전 재시도
     const bases = [
-      'https://apis.data.go.kr/1390802/AgriWeather/WeatherObsrInfo/V3/GnrlWeather/getWeatherTimeList', // V3 먼저
-      'https://apis.data.go.kr/1390802/AgriWeather/WeatherObsrInfo/GnrlWeather/getWeatherTimeList'     // 구버전
+      'https://apis.data.go.kr/1390802/AgriWeather/WeatherObsrInfo/V3/GnrlWeather/getWeatherTimeList',
+      'https://apis.data.go.kr/1390802/AgriWeather/WeatherObsrInfo/GnrlWeather/getWeatherTimeList'
     ];
 
     let lastTxt = '', lastStatus = 500;
@@ -18,11 +19,16 @@ export default async function handler(req, res) {
       u.searchParams.set('serviceKey', KEY);
       u.searchParams.set('Page_No', String(pageNo));
       u.searchParams.set('Page_Size', String(pageSize));
-      u.searchParams.set('date_Time', String(date));   // YYYY-MM-DD
-      u.searchParams.set('obsr_Spot_Cd', String(spotCd));
+      u.searchParams.set('date_Time', String(date));       // YYYY-MM-DD
+      u.searchParams.set('obsr_Spot_Cd', String(spotCd));  // 예: 477802A001
       if (spotNm) u.searchParams.set('obsr_Spot_Nm', String(spotNm));
 
-      const r = await fetch(u.toString());
+      if (debug === '1') {
+        const redacted = u.toString().replace(KEY, '***'); // 키 가림
+        return res.status(200).setHeader('Content-Type', 'text/plain; charset=utf-8').send(redacted);
+      }
+
+      const r = await fetch(u.toString(), { headers: { 'Accept': 'application/xml' } });
       const txt = await r.text();
       if (r.ok && txt.trim()) {
         res.setHeader('Content-Type', 'application/xml; charset=utf-8');
@@ -31,7 +37,7 @@ export default async function handler(req, res) {
       lastTxt = txt; lastStatus = r.status;
     }
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    return res.status(lastStatus || 502).send(`Upstream failed. Last response snippet:\n${lastTxt.slice(0, 800)}`);
+    return res.status(lastStatus || 502).send(`Upstream failed.\n${lastTxt.slice(0, 1000)}`);
   } catch (e) {
     return res.status(500).send(`proxy error: ${e?.message || e}`);
   }
