@@ -1,37 +1,39 @@
 // /api/agri/weather.mjs
 export default async function handler(req, res) {
   try {
-    const KEY_DEC = process.env.DATA_GO_KEY || '';
-    const KEY_ENC = process.env.DATA_GO_KEY_ENC || '';
-    if (!KEY_DEC && !KEY_ENC) return res.status(500).send('Missing DATA_GO_KEY or DATA_GO_KEY_ENC');
+    const KEY = process.env.DATA_GO_KEY;
+    if (!KEY) return res.status(500).send('Missing DATA_GO_KEY');
 
-    const { date = '', spotCd = '', pageNo = '1', pageSize = '20', spotNm = '', debug = '0' } = req.query ?? {};
-    if (!date || !spotCd) return res.status(400).send('Required: date(YYYY-MM-DD), spotCd');
+    // 쿼리 받기 (우리 쪽 간편 이름 → 공공데이터 파라미터로 매핑)
+    const {
+      date,                // yyyy-mm-dd (필수)
+      spotCd,              // obsr_Spot_Code (선택)
+      spotNm,              // obsr_Spot_Nm (선택, 한글 가능)
+      pageNo = '1',
+      pageSize = '20'
+    } = req.query || {};
 
-    // ✅ 올바른 엔드포인트 (메소드명 붙이지 않음)
-    const base = 'https://apis.data.go.kr/1390802/AgriWeather/WeatherObsrInfo/V3/GnrlWeather';
+    if (!date) return res.status(400).send('Required: date (YYYY-MM-DD)');
 
-    const qs = new URLSearchParams();
-    qs.set('serviceKey', KEY_ENC || encodeURIComponent(KEY_DEC)); // 인코딩 키가 있으면 그대로 사용
-    qs.set('Page_No', String(pageNo));
-    qs.set('Page_Size', String(pageSize));
-    qs.set('date_Time', String(date));        // YYYY-MM-DD
-    qs.set('obsr_Spot_Cd', String(spotCd));
-    if (spotNm) qs.set('obsr_Spot_Nm', String(spotNm));
+    // 반드시 http 사용! (이 API는 https 미지원)
+    const base = 'http://apis.data.go.kr/1390802/AgriWeather/WeatherObsrInfo/GnrlWeather';
+    const u = new URL(`${base}/getWeatherTimeList`);
 
-    const finalUrl = `${base}?${qs.toString()}`;
+    // 필수/옵션 파라미터 채우기 (URLSearchParams가 알아서 인코딩해줌)
+    u.searchParams.set('serviceKey', KEY);      // Decoding 키 사용 권장
+    u.searchParams.set('Page_No', String(pageNo));
+    u.searchParams.set('Page_Size', String(pageSize));
+    u.searchParams.set('date_Time', String(date));
+    if (spotCd) u.searchParams.set('obsr_Spot_Code', String(spotCd));
+    if (spotNm) u.searchParams.set('obsr_Spot_Nm', String(spotNm));
 
-    if (debug === '1') {
-      const masked = finalUrl.replace(KEY_ENC || encodeURIComponent(KEY_DEC), '***');
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      return res.status(200).send(masked);
-    }
+    const r = await fetch(u.toString(), { headers: { 'Accept': 'application/xml' } });
+    const xml = await r.text();
 
-    const r = await fetch(finalUrl, { headers: { Accept: 'application/xml' } });
-    const txt = await r.text();
+    // 그대로 프록시 반환
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-    return res.status(r.status).send(txt);
+    return res.status(r.status).send(xml);
   } catch (e) {
-    return res.status(500).send(`proxy error: ${e?.message || e}`);
+    return res.status(500).send(`proxy error: ${e.message || e}`);
   }
 }
