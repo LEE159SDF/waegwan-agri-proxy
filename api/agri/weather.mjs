@@ -1,43 +1,44 @@
 // /api/agri/weather.mjs
 export default async function handler(req, res) {
   try {
-    const KEY = process.env.DATA_GO_KEY;
-    if (!KEY) return res.status(500).send('Missing DATA_GO_KEY');
+    // ① 키 읽기 (둘 중 하나만 넣어도 됨)
+    // - DATA_GO_KEY      : Decoding 키(슬래시/== 포함된 원본)
+    // - DATA_GO_KEY_ENC  : Encoding 키(%2F, %3D%3D 형태)
+    const KEY_DEC = process.env.DATA_GO_KEY || '';
+    const KEY_ENC = process.env.DATA_GO_KEY_ENC || '';
 
+    if (!KEY_DEC && !KEY_ENC) return res.status(500).send('Missing DATA_GO_KEY or DATA_GO_KEY_ENC');
+
+    // ② 파라미터
     const { date = '', spotCd = '', pageNo = '1', pageSize = '20', spotNm = '', debug = '0' } = req.query ?? {};
     if (!date || !spotCd) return res.status(400).send('Required: date(YYYY-MM-DD), spotCd');
 
-    // V3 먼저 시도 → 실패 시 구버전 재시도
-    const bases = [
-      'https://apis.data.go.kr/1390802/AgriWeather/WeatherObsrInfo/V3/GnrlWeather/getWeatherTimeList',
-      'https://apis.data.go.kr/1390802/AgriWeather/WeatherObsrInfo/GnrlWeather/getWeatherTimeList'
-    ];
+    // ③ 정확한 엔드포인트(V3)
+    const base = 'https://apis.data.go.kr/1390802/AgriWeather/WeatherObsrInfo/V3/GnrlWeather/getWeatherTimeList';
 
-    let lastTxt = '', lastStatus = 500;
-    for (const base of bases) {
-      const u = new URL(base);
-      u.searchParams.set('serviceKey', KEY);
-      u.searchParams.set('Page_No', String(pageNo));
-      u.searchParams.set('Page_Size', String(pageSize));
-      u.searchParams.set('date_Time', String(date));       // YYYY-MM-DD
-      u.searchParams.set('obsr_Spot_Cd', String(spotCd));  // 예: 477802A001
-      if (spotNm) u.searchParams.set('obsr_Spot_Nm', String(spotNm));
+    // ④ 쿼리스트링 직접 구성 (키는 이중 인코딩 방지)
+    const qs = new URLSearchParams();
+    qs.set('serviceKey', KEY_ENC || encodeURIComponent(KEY_DEC)); // 이미 인코딩된 키가 있으면 그대로 사용
+    qs.set('Page_No', String(pageNo));
+    qs.set('Page_Size', String(pageSize));
+    qs.set('date_Time', String(date));        // YYYY-MM-DD
+    qs.set('obsr_Spot_Cd', String(spotCd));
+    if (spotNm) qs.set('obsr_Spot_Nm', String(spotNm));
 
-      if (debug === '1') {
-        const redacted = u.toString().replace(KEY, '***'); // 키 가림
-        return res.status(200).setHeader('Content-Type', 'text/plain; charset=utf-8').send(redacted);
-      }
+    const finalUrl = `${base}?${qs.toString()}`;
 
-      const r = await fetch(u.toString(), { headers: { 'Accept': 'application/xml' } });
-      const txt = await r.text();
-      if (r.ok && txt.trim()) {
-        res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-        return res.status(r.status).send(txt);
-      }
-      lastTxt = txt; lastStatus = r.status;
+    // ⑤ debug=1 이면 최종 URL만 보여줌(키는 ***로 마스킹)
+    if (debug === '1') {
+      const masked = finalUrl.replace(KEY_ENC || encodeURIComponent(KEY_DEC), '***');
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      return res.status(200).send(masked);
     }
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    return res.status(lastStatus || 502).send(`Upstream failed.\n${lastTxt.slice(0, 1000)}`);
+
+    // ⑥ 호출
+    const r = await fetch(finalUrl, { headers: { 'Accept': 'application/xml' } });
+    const txt = await r.text();
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    return res.status(r.status).send(txt);
   } catch (e) {
     return res.status(500).send(`proxy error: ${e?.message || e}`);
   }
